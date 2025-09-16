@@ -1,0 +1,49 @@
+{
+    "name": "finq/laravel-partition-manager",
+    "description": "A Laravel package for managing PostgreSQL partitioned tables",
+    "keywords": ["laravel", "postgresql", "partition", "database", "table-partitioning"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Inoyatulloh",
+            "email": "mronx@ya.ru"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/database": "^11.0|^12.0",
+        "illuminate/console": "^11.0|^12.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0|^11.0",
+        "orchestra/testbench": "^9.0",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Finq\\LaravelPartitionManager\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Finq\\LaravelPartitionManager\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Finq\\LaravelPartitionManager\\PartitionManagerServiceProvider"
+            ],
+            "aliases": {
+                "PartitionManager": "Finq\\LaravelPartitionManager\\Facades\\PartitionManager"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
