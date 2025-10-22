@@ -10,6 +10,8 @@ use Finq\LaravelPartitionManager\ValueObjects\RangePartition;
 use Finq\LaravelPartitionManager\ValueObjects\HashPartition;
 use Finq\LaravelPartitionManager\ValueObjects\PartitionDefinition;
 use Finq\LaravelPartitionManager\Services\PartitionSchemaManager;
+use Finq\LaravelPartitionManager\Builders\SubPartitionBuilder;
+use Finq\LaravelPartitionManager\Builders\DateRangeBuilder;
 
 class PostgresPartitionBuilder
 {
