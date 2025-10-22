@@ -16,19 +16,24 @@ A powerful Laravel package for managing PostgreSQL partitioned tables. Supports 
 - [Schema Management](#schema-management)
   - [Per-Partition Schemas](#per-partition-schemas)
   - [Schema Registration](#schema-registration)
+  - [PartitionSchemaManager Service](#partitionschemamanager-service)
 - [Sub-Partitioning](#sub-partitioning)
   - [Multi-Level Partitioning](#multi-level-partitioning)
   - [Using Value Objects](#using-value-objects-for-complex-structures)
 - [Partition Management](#partition-management)
   - [Runtime Operations](#runtime-operations)
   - [Table Operations](#table-operations)
+  - [Partition Queries and Statistics](#partition-queries-and-statistics)
 - [Advanced Features](#advanced-features)
   - [Default Partitions](#default-partitions)
   - [Check Constraints](#check-constraints)
   - [Partition Pruning](#partition-pruning)
   - [Custom Tablespaces](#custom-tablespaces)
+  - [Custom Partition Expressions](#custom-partition-expressions)
+  - [Multi-Column Partitioning](#multi-column-partitioning)
 - [Configuration](#configuration)
 - [Static Helper Methods](#static-helper-methods)
+- [Using Facades](#using-facades)
 - [License](#license)
 
 ## Installation
@@ -58,6 +63,8 @@ Partition::create('logs', function($table) {
 ->generateMonthlyPartitions()
 ->create();
 ```
+
+**Note:** The schema definition callback uses Laravel's `Blueprint` class, giving you access to all standard Laravel column types and index methods. All operations are wrapped in database transactions for safety - if any partition fails to create, the entire operation is rolled back.
 
 ### Quick Partition Generation (Existing Tables)
 
@@ -167,7 +174,14 @@ Use convenient methods to automatically generate common partition patterns witho
 ->generateDailyPartitions()    // 30 daily partitions from today
 ->generateQuarterlyPartitions() // 8 quarterly partitions from current quarter
 
-// For existing tables (simpler syntax)
+// Quick static methods for existing tables
+Partition::monthly('logs', 'created_at', 12);  // 12 monthly partitions
+Partition::yearly('reports', 'year', 5);       // 5 yearly partitions
+Partition::daily('logs', 'log_date', 30);      // 30 daily partitions
+Partition::weekly('events', 'event_date', 12); // 12 weekly partitions
+Partition::quarterly('metrics', 'quarter', 8); // 8 quarterly partitions
+
+// Or use the builder for more control
 Partition::generate('logs')
     ->by('created_at')
     ->monthly(12);  // Generate 12 monthly partitions
@@ -194,7 +208,7 @@ Partition::generate('users')
 
 ### Per-Partition Schemas
 
-Organize partitions into different PostgreSQL schemas for better data organization and access control.
+Organize partitions into different PostgreSQL schemas for better data organization and access control. Schemas are automatically created if they don't exist.
 
 ```php
 Partition::create('logs', function($table) {
@@ -211,6 +225,8 @@ Partition::create('logs', function($table) {
 ->create();
 ```
 
+**Note:** PostgreSQL schemas will be automatically created if they don't exist when the partitions are created.
+
 ### Schema Registration
 
 Register multiple schemas for different partition types to automatically organize related partitions.
@@ -221,6 +237,39 @@ Register multiple schemas for different partition types to automatically organiz
     'info' => 'info_log_schema',
     'debug' => 'debug_log_schema'
 ])
+```
+
+### PartitionSchemaManager Service
+
+Use the dedicated schema management service for advanced schema handling and organization.
+
+```php
+use Finq\LaravelPartitionManager\Services\PartitionSchemaManager;
+
+$schemaManager = new PartitionSchemaManager();
+
+// Set default schema for all partitions
+$schemaManager->setDefault('default_partitions');
+
+// Register schemas for specific partition types
+$schemaManager->register('error', 'error_log_schema')
+              ->register('info', 'info_log_schema')
+              ->register('debug', 'debug_log_schema');
+
+// Register multiple schemas at once
+$schemaManager->registerMultiple([
+    'active' => 'active_data_schema',
+    'archived' => 'archive_schema'
+]);
+
+// Query schema configurations
+$errorSchema = $schemaManager->getSchemaFor('error');
+$hasSchema = $schemaManager->hasSchemaFor('info');
+$defaultSchema = $schemaManager->getDefault();
+$allSchemas = $schemaManager->getAllSchemas();
+
+// Clear all schema mappings
+$schemaManager->clear();
 ```
 
 ## Sub-Partitioning
@@ -321,6 +370,44 @@ $builder->vacuum();         // Reclaim storage
 $builder->vacuum(true);     // VACUUM FULL for complete rebuild
 ```
 
+### Partition Queries and Statistics
+
+Query detailed partition information, statistics, and metadata at runtime.
+
+```php
+use Finq\LaravelPartitionManager\Services\PartitionManager;
+
+$manager = app(PartitionManager::class);
+
+// Get detailed partition information
+$partitionInfo = $manager->getPartitionInfo('logs', 'logs_2024_01');
+// Returns: object with size, row_count, schema, tablespace
+
+// Get partition strategy/type
+$strategy = $manager->getPartitionStrategy('logs');
+// Returns: 'RANGE', 'LIST', or 'HASH'
+
+// Get partition columns and their data types
+$columns = $manager->getPartitionColumns('logs');
+// Returns: [['column' => 'created_at', 'data_type' => 'timestamp without time zone']]
+
+// Get total table size
+$tableSize = $manager->getTableSize('logs');
+// Returns: Human-readable size like '2456 MB'
+
+// Count total partitions
+$count = $manager->getPartitionCount('logs');
+
+// Get oldest and newest partitions
+$oldestPartition = $manager->getOldestPartition('logs');
+$newestPartition = $manager->getNewestPartition('logs');
+
+// Maintenance operations on specific partitions
+$manager->analyzePartition('logs_2024_01');
+$manager->vacuumPartition('logs_2024_01');
+$manager->vacuumPartition('logs_2024_01', true); // VACUUM FULL
+```
+
 ## Advanced Features
 
 ### Default Partitions
@@ -358,6 +445,53 @@ Assign partitions to specific tablespaces for storage optimization.
 ->addRangePartition('hot_data', '2024-01-01', '2024-02-01')
 ```
 
+### Custom Partition Expressions
+
+Define custom SQL expressions for partition keys when built-in methods are not sufficient.
+
+```php
+// Custom expression for complex date operations
+Partition::create('events', function($table) {
+    $table->id();
+    $table->timestamp('event_time');
+    $table->string('timezone');
+})
+->range()
+->partitionByExpression("DATE_TRUNC('week', event_time AT TIME ZONE timezone)")
+->addRangePartition('events_week_1', '2024-01-01', '2024-01-08')
+->create();
+
+// Extract specific date parts
+->partitionByExpression("EXTRACT(YEAR FROM order_date)")
+->addRangePartition('orders_2024', 2024, 2025)
+
+// Custom calculations
+->partitionByExpression("(amount / 100)::int")
+->addRangePartition('tier_1', 0, 10)
+```
+
+### Multi-Column Partitioning
+
+Partition tables using multiple columns for more granular data organization.
+
+```php
+// Partition by multiple columns (composite key)
+Partition::create('sales', function($table) {
+    $table->id();
+    $table->string('region');
+    $table->integer('year');
+    $table->decimal('amount');
+})
+->range()
+->partitionBy(['region', 'year'])  // Array of columns
+->addRangePartition('sales_us_2024', ['US', 2024], ['US', 2025])
+->addRangePartition('sales_eu_2024', ['EU', 2024], ['EU', 2025])
+->create();
+
+// Combine columns with expressions
+->partitionBy(['country', 'DATE_TRUNC(\'month\', created_at)'])
+```
+
 ## Configuration
 
 Publish and customize the configuration file to set default behaviors.
@@ -369,16 +503,30 @@ php artisan vendor:publish --tag=partition-manager-config
 ```php
 // config/partition-manager.php
 return [
+    // Default database connection to use (defaults to Laravel's default)
+    'default_connection' => env('DB_CONNECTION', 'pgsql'),
+
+    // Default behaviors for partition operations
     'defaults' => [
-        'enable_partition_pruning' => true,
-        'detach_concurrently' => false,
-        'analyze_after_create' => true,
-        'vacuum_after_drop' => true,
+        'enable_partition_pruning' => true,  // Enable query optimization
+        'detach_concurrently' => false,      // Use CONCURRENTLY for detach
+        'analyze_after_create' => true,      // Auto-analyze after creation
+        'vacuum_after_drop' => true,         // Auto-vacuum after drop
     ],
+
+    // Partition naming conventions
     'naming' => [
-        'separator' => '_',
-        'date_format' => 'Y_m',
-        'day_format' => 'Y_m_d',
+        'prefix' => '',           // Prefix for partition names
+        'suffix' => '',           // Suffix for partition names
+        'separator' => '_',       // Separator in partition names
+        'date_format' => 'Y_m',   // PHP date format for monthly partitions
+        'day_format' => 'Y_m_d',  // PHP date format for daily partitions
+    ],
+
+    // Logging configuration
+    'logging' => [
+        'enabled' => env('PARTITION_LOGGING', true),
+        'channel' => env('PARTITION_LOG_CHANNEL', 'daily'),
     ],
 ];
 ```
@@ -390,19 +538,84 @@ Utility methods for quick partition operations and checks.
 ```php
 use Finq\LaravelPartitionManager\Partition;
 
+// Create partitioned table with schema definition
+$builder = Partition::create('logs', function($table) {
+    $table->id();
+    $table->text('message');
+    $table->timestamp('created_at');
+});
+
+// Alternative alias for create()
+$builder = Partition::table('events', function($table) {
+    // Define schema...
+});
+
+// Quick partition generation for existing tables
+Partition::generate('logs')
+    ->by('created_at')
+    ->monthly(12);
+
+// One-liner partition generation methods
+Partition::monthly('orders', 'created_at', 12);    // 12 monthly partitions
+Partition::yearly('reports', 'year', 5);           // 5 yearly partitions
+Partition::daily('logs', 'log_date', 30);          // 30 daily partitions
+Partition::weekly('events', 'event_date', 12);     // 12 weekly partitions
+Partition::quarterly('metrics', 'quarter', 8);     // 8 quarterly partitions
+
 // Check if a table is partitioned
 if (Partition::isPartitioned('logs')) {
-    // Get list of all partitions
-    $partitions = Partition::getPartitions('logs');
+    // Table is partitioned
 }
+
+// Get list of all partitions with metadata
+$partitions = Partition::getPartitions('logs');
+// Returns array of partition objects with names, bounds, sizes, row counts
 
 // Check if a specific partition exists
 if (Partition::partitionExists('logs', 'logs_2024_01')) {
     // Partition exists
 }
 
-// Drop a table and all its partitions
+// Drop a table and all its partitions (CASCADE)
 Partition::dropIfExists('logs');
+```
+
+## Using Facades
+
+Access the PartitionManager service using Laravel facades for cleaner dependency injection-free code.
+
+```php
+use Finq\LaravelPartitionManager\Facades\PartitionManager;
+
+// All PartitionManager methods are available as static calls
+$partitions = PartitionManager::getPartitions('logs');
+$isPartitioned = PartitionManager::isPartitioned('logs');
+$strategy = PartitionManager::getPartitionStrategy('logs');
+$count = PartitionManager::getPartitionCount('logs');
+
+// Drop old partitions
+$dropped = PartitionManager::dropOldPartitions('logs', new DateTime('-6 months'));
+
+// Maintenance operations
+PartitionManager::analyzePartition('logs_2024_01');
+PartitionManager::vacuumPartition('logs_2024_01', true);
+```
+
+Alternatively, use dependency injection or the service container:
+
+```php
+use Finq\LaravelPartitionManager\Services\PartitionManager;
+
+// Via dependency injection (recommended)
+public function __construct(private PartitionManager $partitionManager)
+{
+    // Use $this->partitionManager...
+}
+
+// Via service container
+$manager = app(PartitionManager::class);
+// Or
+$manager = app('partition-manager');
 ```
 
 ## License
